@@ -36,7 +36,7 @@ parser.add_argument('--adv_normalization', type=str2bool, default=False, help='A
 opt = parser.parse_args()
 
 opt.dvc = torch.device(opt.dvc)
-print(opt) 
+print(opt)
 
 def main():
     pass
