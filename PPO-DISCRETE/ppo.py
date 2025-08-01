@@ -1,3 +1,4 @@
+from re import S
 from torch.distribution import Categorical 
 from layers import Actor , Critic
 import numpy as np
@@ -57,13 +58,81 @@ class PPO_Discrete():
         done = torch.from_numpy(self.done_holder).to(self.device)
         dw = torch.from_numpy(self.dw_holder).to(self.device)
         
+        # Calculate TD + GAE 
         
+        with torch.no_grad():
+            vs = self.critic(s)
+            vs_next = self.critic(s_next)
+            
+            deltas = r + self.gamma * vs_next * (~dw) - vs
+            deltas = deltas.cpu().flatten().numpy()
+            
+            adv = [0]
+            
+            for dlt , done  in zip(deltas[::-1] , done.cpu().flatten().numpy()[::-1]):
+                advantage = dlt + self.gamma * self.lambd * adv[-1] * (~done)
+                adv.append(advantage)
+            
+            adv.reverse()
+            adv = copy.deepcopy(adv[0:-1])
+            adv = torch.tensor(adv , dtype = torch.float32).to(self.device)
+            vs = torch.tensor(vs , dtype = torch.float32).to(self.device)
+            td_target = vs + adv
+            
+            if self.adv_norm:
+                adv = (adv - adv.mean()) / (adv.std() + 1e-10)
+            
+            # PPO update 
+            
+            optim_iter_num = int(math.ceil(s.shape[0] / self.batch_size))
+            for _ in range(self.K_epochs):
+                
+                perm = np.arange(s.shape[0])
+                np.random.shuffle(perm)
+                perm = torch.LongTensor(perm).to(self.device)
+                s , a , td_target , adv , old_prob = s[perm].clone() , a[perm].clone() , td_target[perm].clone() , adv[perm].clone() , old_prob[perm].clone()
+                
+                for i in range(optim_iter_num):
+                    index = slice(i * self.batch_size , min((i+1) * self.batch_size , s.shape[0]))
+                    prob = self.actor.get_action(s[index] , softmax_dim = -1)
+                    entropy = Categorical(prob).entropy().sum(0 , keepdim = True)
+                    prob_a = prob.gather(1 , a[index]
+                                         )
+                    ratio = torch.exp(torch.log(prob_a) - torch.log(old_prob[index]))
+                    
+                    surr1 = ratio * adv[index]
+                    surr2 = torch.clamp(ratio , 1 - self.clip_ratio , 1 + self.clip_ratio) * adv[index]
+                    a_loss = -torch.min(surr1 , surr2) - self.entropy_coef * entropy 
+                    self.actor_optimizer.zero_grad()
+                    a_loss.mean().backward()
+                    torch.nn.utils.clip_grad_norm_(self.actor.parameters() , self.max_grad_norm)
+                    self.actor_optimizer.step()
+                    
+                    
+                    c_loss = (self.critic(s[index]) - td_target[index]).pow(2).mean()
+                    for name,param in self.critic.named_parameters():
+                        if 'weight' in name:
+                            c_loss += self.l2_reg * param.pow(2).sum()
+                        
+                        self.critic.optimizer.zero_grad()
+                        c_loss.backward()
+                        self.critic.optimizer.step()
+    
+    
+    def put_data(self, s ,a ,r ,s_next ,done , dw , idx , logp):
+        self.s_holder[idx] = s 
+        self.a_holder[idx] = a 
+        self.r_holder[idx] = r 
+        self.s_next_holder[idx] = s_next 
+        self.logp_a_holder[idx] = logp
+        self.done_holder[idx] = done 
+        self.dw_holder[idx] = dw
+        
+    def save(self , episode):
+        torch.save(self.actor.state_dict() , "./model/ppo_actor_{}".format(episode))
+        torch.save(self.critic.state_dict() , "./model/ppo_critic_{}".format(episode))
         
     
-        
-        
-
-
-
-
-
+    def load(self, episode):
+        self.actor.load_state_dict(torch.load("./model/ppo_actor_{}".format(episode)))
+        self.critic.load_state_dict(torch.load("./model/ppo_critic_{}".format(episode)))
