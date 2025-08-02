@@ -39,6 +39,76 @@ opt.dvc = torch.device(opt.dvc)
 print(opt)
 
 def main():
-    pass
+    EnvName = ['CartPole-v1' , 'LunarLander-v2']
+    BriefEnvName = ['CP-v1' , 'LL-v2']
+    env = gym.make(EnvName[opt.EnvIdex] , render_mode = 'human' if opt.render else None)
+    eval_env = gym.make(EnvName[opt.EnvIdex])
+    opt.state_dim = env.observation_space.shape[0]
+    opt.action_dim = env.action_space.n
+    opt.max_e_steps = env._max_episode_steps
+    
+    # Seed Everything
+    env_seed = opt.seed
+    torch.manual_seed(opt.seed)
+    torch.cuda.manual_seed(opt.seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    print("Random Seed: {}".format(opt.seed))
+    
+    
+    print('Env:',BriefEnvName[opt.EnvIdex],'  state_dim:',opt.state_dim,'  action_dim:',opt.action_dim,'   Random Seed:',opt.seed, '  max_e_steps:',opt.max_e_steps)
+    print('\n')
+    
+    if opt.write:
+        from torch.utils.tensorboard import SummaryWriter
+        timenow = str(datetime.now())[0:-10]
+        timenow = ' ' + timenow[0:13] + '_' + timenow[-2::]
+        writepath = 'runs/{}'.format(BriefEnvName[opt.EnvIdex]) + timenow
+        if os.path.exists(writepath): shutil.rmtree(writepath)
+        writer = SummaryWriter(log_dir=writepath)
+
+    if not os.path.exists('model'): os.mkdir('model')
+    
+    agent = PPO_Discrete(**vars(opt))
+    if opt.Loadmodel: agent.load(opt.ModelIdex)
+    
+    if opt.render:
+        while True:
+            ep_r = evaluate_policy(env, agent, turns=1)
+            print(f'Env:{EnvName[opt.EnvIdex]}, Episode Reward:{ep_r}')
+    else:
+        traj_length , total_steps = 0 ,0 
+        
+        while total_steps < opt.Max_train_steps:
+            s , info = env.reset(seed = env_seed)
+            env_seed +=1 
+            done = False 
+            
+            while not done:
+                a , logprob_a = agent.select_action(s , deterministic = False )
+                s_next , r , done , tr , _  = env.step(a)
+                agent.put_data(s , a , r , s_next , done , tr , traj_length , logprob_a)
+                traj_length +=1 
+                total_steps +=1 
+                s = s_next
+                
+                if traj_length % opt.T_horizon== 0:
+                    agent.train()
+                    traj_length = 0 
+                    
+                if total_steps % opt.eval_interval == 0:
+                    score = evaluate_policy(eval_env, agent, turns=10)
+                    if opt.write: writer.add_scalar('ep_r', score, global_step=total_steps)
+                    print('EnvName:',EnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', score)
+                if total_steps % opt.save_interval == 0:
+                    agent.save(total_steps)
+                    
+        
+        agent.save(opt.Max_train_steps)
+        env.close()
+        eval_env.close()
 
 
+if __name__ == "__main__":
+    main()
+  
