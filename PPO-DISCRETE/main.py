@@ -1,6 +1,6 @@
 from utils import evaluate_policy
 from datetime import datetime
-from PPO import PPO_Discrete 
+from ppo import PPO_Discrete 
 
 import gymnasium as gym 
 import os , shutil 
