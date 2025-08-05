@@ -1,5 +1,9 @@
 ## Reinforcement Learning 
 
+Minimal, well‐structured PyTorch implementations of core deep RL algorithms.
+written from scratch with readability and reproducibility in mind.  
 
-### To-be-Updated
- 
+→ **Implemented:**  
+- Soft Actor-Critic (SAC)  
+- Proximal Policy Optimization (PPO)
+- MORE...  
